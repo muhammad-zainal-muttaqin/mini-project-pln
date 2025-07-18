@@ -36,22 +36,37 @@ function sendReport() {
       return;
     }
 
-    // Ambil screenshot tabel REPORT02
-    var blob = createReportScreenshot(reportSheet);
-    if (!blob) {
-      Logger.log("Gagal membuat screenshot");
-      return;
-    }
+    // Update timestamp di sheet sebelum screenshot
+    reportSheet.getRange('C5').setValue(new Date());
+    SpreadsheetApp.flush();
+    Utilities.sleep(500);
 
     // Buat nama file berdasarkan tanggal
     var reportDateObj = reportSheet.getRange('C3').getValue();
     var reportDateStr = Utilities.formatDate(reportDateObj, Session.getScriptTimeZone(), 'yyyyMMdd');
-    var genDateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd');
-    var fileName = 'KOMANDO_' + reportDateStr + '_' + genDateStr + '.png';
-    blob.setName(fileName);
+    var now = new Date();
+    var genDateTimeStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+    var fileName = 'KOMANDO_' + reportDateStr + '_' + genDateTimeStr + '.png';
 
+    // PENTING: Buat screenshot dua kali untuk memastikan identik
+    // Screenshot pertama untuk WhatsApp
+    var blobForWhatsApp = createReportScreenshot(reportSheet);
+    if (!blobForWhatsApp) {
+      Logger.log("Gagal membuat screenshot untuk WhatsApp");
+      return;
+    }
+    blobForWhatsApp.setName(fileName);
+    
+    // Screenshot kedua untuk Drive
+    var blobForDrive = createReportScreenshot(reportSheet);
+    if (!blobForDrive) {
+      Logger.log("Gagal membuat screenshot untuk Drive");
+      return;
+    }
+    blobForDrive.setName(fileName);
+    
     // Upload gambar ke Google Drive
-    var publicUrl = uploadImageToDrive(blob);
+    var publicUrl = uploadImageToDrive(blobForDrive);
     Logger.log("Gambar berhasil diupload ke Drive: " + publicUrl);
 
     // Ambil data untuk logging
@@ -76,11 +91,16 @@ function sendReport() {
       }
 
       try {
-        // Kirim pesan dengan gambar sebagai attachment
+        // Setelah uploadImageToDrive()…
+        var fileId = publicUrl.match(/id=([^&]+)/)[1];
+        var driveBlob = DriveApp.getFileById(fileId).getBlob();
+        driveBlob.setName(fileName);
+        
+        // Kirim pesan dengan gambar dari Drive link sebagai attachment
         var payload = {
-          target: phoneNumber,
-          message: messageText,
-          file: blob,
+          target:   phoneNumber,
+          message:  messageText,
+          file:     screenshotBlob,   // atau driveBlob kalau mau pakai file hasil upload
           filename: fileName
         };
         
@@ -158,8 +178,12 @@ function formatDateRange(startDate, endDate) {
 
 function createReportScreenshot(reportSheet) {
   try {
-    // Deteksi range dinamis - ambil dari A1 sampai data terakhir
-    var lastRow = reportSheet.getLastRow();
+    // Pastikan semua perubahan di sheet tercommit sebelum screenshot
+    SpreadsheetApp.flush();
+    Utilities.sleep(500);
+    // Cari baris terakhir yang benar-benar berisi data di kolom B (ORG_1)
+    // Karena kolom B selalu berisi data untuk setiap baris organisasi
+    var lastRow = findLastDataRow(reportSheet);
     
     // PENTING: Hanya ambil sampai kolom G (kolom ke-7) untuk laporan
     // Jangan ambil kolom H dan seterusnya yang berisi daftar pegawai
@@ -169,7 +193,7 @@ function createReportScreenshot(reportSheet) {
     // - Header info (B1:C5)
     // - Logo & header summary (B8:G10) 
     // - Header tabel (B12:G12)
-    // - Data sampai baris terakhir, tapi hanya sampai kolom G
+    // - Data sampai baris terakhir yang berisi data, tapi hanya sampai kolom G
     var range = reportSheet.getRange(1, 1, lastRow, lastCol);
     
     Logger.log("Range laporan: A1:" + getColumnLetter(lastCol) + lastRow);
@@ -214,11 +238,31 @@ function getColumnLetter(columnNumber) {
   return columnLetter;
 }
 
+// Helper function untuk mencari baris terakhir yang berisi data
+function findLastDataRow(reportSheet) {
+  // Ambil semua data di kolom B (ORG_1) dari baris 1 sampai 100
+  var columnBData = reportSheet.getRange('B1:B100').getValues();
+  
+  // Cari dari bawah ke atas untuk menemukan baris terakhir yang tidak kosong
+  for (var i = columnBData.length - 1; i >= 0; i--) {
+    if (columnBData[i][0] !== '' && columnBData[i][0] !== null && columnBData[i][0] !== undefined) {
+      var lastDataRow = i + 1; // +1 karena array dimulai dari 0 tapi baris dimulai dari 1
+      Logger.log("Baris terakhir yang berisi data: " + lastDataRow);
+      return lastDataRow;
+    }
+  }
+  
+  // Jika tidak ditemukan data, return minimal 30 baris untuk safety
+  Logger.log("Tidak ditemukan data, menggunakan 30 baris default");
+  return 30;
+}
+
 function uploadImageToDrive(imageBlob) {
   var folder = DriveApp.getFolderById("1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT");
   var file = folder.createFile(imageBlob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return "https://drive.google.com/uc?id=" + file.getId();
+  // Gunakan export=download untuk direct download
+  return "https://drive.google.com/uc?export=download&id=" + file.getId();
 }
 
 function testSendReport() {
@@ -252,27 +296,34 @@ function testSendReport() {
     
     Logger.log("✅ Semua sheet berhasil ditemukan");
 
-    // Ambil screenshot tabel REPORT02
-    Logger.log("📸 Membuat screenshot...");
-    var blob = createReportScreenshot(reportSheet);
-    if (!blob) {
-      Logger.log("ERROR: Gagal membuat screenshot");
-      return;
-    }
-    Logger.log("✅ Screenshot berhasil dibuat");
+    // Update timestamp di sheet sebelum screenshot
+    reportSheet.getRange('C5').setValue(new Date());
+    SpreadsheetApp.flush();
+    Utilities.sleep(500);
 
     // Buat nama file berdasarkan tanggal
     var reportDateObj = reportSheet.getRange('C3').getValue();
     var reportDateStr = Utilities.formatDate(reportDateObj, Session.getScriptTimeZone(), 'yyyyMMdd');
-    var genDateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd');
-    var fileName = 'TEST_KOMANDO_' + reportDateStr + '_' + genDateStr + '.png';
-    blob.setName(fileName);
-    Logger.log("✅ Nama file: " + fileName);
+    var now = new Date();
+    var genDateTimeStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+    var fileName = 'TEST_KOMANDO_' + reportDateStr + '_' + genDateTimeStr + '.png';
+
+    // Hapus pembuatan blobForWhatsApp dan blobForDrive
+    // Ambil screenshot dan upload ke Drive
+    // Ambil satu screenshot
+    Logger.log("📸 Membuat screenshot laporan...");
+    var screenshotBlob = createReportScreenshot(reportSheet);
+    if (!screenshotBlob) {
+      Logger.log("ERROR: Gagal membuat screenshot laporan");
+      return;
+    }
+    screenshotBlob.setName(fileName);
+    Logger.log("✅ Screenshot berhasil dibuat");
 
     // Upload gambar ke Google Drive
-    Logger.log("☁️ Mengupload ke Google Drive...");
-    var publicUrl = uploadImageToDrive(blob);
-    Logger.log("✅ Gambar berhasil diupload ke Drive: " + publicUrl);
+    Logger.log("☁️ Mengupload screenshot ke Google Drive...");
+    var publicUrl = uploadImageToDrive(screenshotBlob);
+    Logger.log("✅ Screenshot berhasil diupload ke Drive: " + publicUrl);
 
     // Ambil data untuk logging
     var logColumnA = reportSheet.getRange('C2').getValue();
@@ -302,11 +353,17 @@ function testSendReport() {
       var formattedPhone = formatPhone(testPhone);
       Logger.log("📞 Nomor terformat: " + formattedPhone);
       
-      // Kirim pesan dengan gambar sebagai attachment
+      // Setelah uploadImageToDrive()…
+      // Dapatkan blob langsung dari file Drive yang baru di-upload
+      var fileId = publicUrl.match(/id=([^&]+)/)[1];
+      var driveBlob = DriveApp.getFileById(fileId).getBlob();
+      driveBlob.setName(fileName);
+      
+      // Kirim pesan dengan gambar file Drive sebagai attachment
       var payload = {
         target: formattedPhone,
         message: testMessage,
-        file: blob,
+        file:    driveBlob,
         filename: fileName
       };
       
