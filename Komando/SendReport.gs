@@ -4,12 +4,21 @@ var DEBUG_PHONE_RAW = '';
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Send Report 📄')
-    .addItem('Send Report 📩', 'sendReport')
+    .addItem('Send only TO 📩', 'sendReportTOOnly')
+    .addItem('Send TO & CC 📩📋', 'sendReportTOAndCC')
     .addItem('Test Send Report 🧪', 'testSendReport')
     .addToUi();
 }
 
-function sendReport() {
+function sendReportTOOnly() {
+  sendReportWithFilter('TO');
+}
+
+function sendReportTOAndCC() {
+  sendReportWithFilter('ALL');
+}
+
+function sendReportWithFilter(filterType) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) {
     Logger.log("Could not acquire lock. Process is already running.");
@@ -77,16 +86,27 @@ function sendReport() {
 
     // Retrieve token and recipient data
     var token = msgSheet.getRange('C5').getValue();
-    var recipientData = msgSheet.getRange(7, 3, msgSheet.getLastRow() - 6, 3).getValues(); // C7:E
+    var recipientData = msgSheet.getRange(7, 2, msgSheet.getLastRow() - 6, 4).getValues(); // B7:E (B=type, C=phone, D=name, E=message)
 
-    // Send message to each recipient
+    var sentCount = 0;
+    var skippedCount = 0;
+
+    // Send message to each recipient based on filter
     recipientData.forEach(function(row) {
-      var phoneNumber = getTargetPhone(row[0]); // C
-      var recipientName = row[1]; // D
-      var messageText = row[2]; // E
+      var recipientType = row[0]; // B column (TO/CC)
+      var phoneNumber = getTargetPhone(row[1]); // C column
+      var recipientName = row[2]; // D column
+      var messageText = row[3]; // E column
 
       // Skip if data is incomplete
       if (!phoneNumber || !messageText || phoneNumber === '' || messageText === '') {
+        return;
+      }
+
+      // Apply filter logic
+      if (filterType === 'TO' && recipientType !== 'TO') {
+        skippedCount++;
+        Logger.log('Skipped ' + recipientType + ' recipient: ' + recipientName);
         return;
       }
 
@@ -112,21 +132,22 @@ function sendReport() {
         };
 
         var response = UrlFetchApp.fetch('https://api.fonnte.com/send', options);
-        Logger.log('Message sent to ' + phoneNumber + ': ' + response.getContentText());
+        Logger.log('Message sent to ' + phoneNumber + ' (' + recipientType + '): ' + response.getContentText());
         
         // Log to LOG sheet
-        logSheet.appendRow([logColumnA, logColumnB, phoneNumber, recipientName, messageText, 'SENT', new Date()]);
+        logSheet.appendRow([logColumnA, logColumnB, phoneNumber, recipientName, messageText, 'SENT_' + recipientType, new Date()]);
+        sentCount++;
         
       } catch (error) {
-        Logger.log('Error sending message to ' + phoneNumber + ': ' + error);
-        logSheet.appendRow([logColumnA, logColumnB, phoneNumber, recipientName, messageText, 'FAILED', new Date()]);
+        Logger.log('Error sending message to ' + phoneNumber + ' (' + recipientType + '): ' + error);
+        logSheet.appendRow([logColumnA, logColumnB, phoneNumber, recipientName, messageText, 'FAILED_' + recipientType, new Date()]);
       }
       
       // Delay to avoid rate limiting
       Utilities.sleep(3000);
     });
 
-    Logger.log("Report sending process completed");
+    Logger.log("Report sending process completed. Sent: " + sentCount + ", Skipped: " + skippedCount);
     
   } finally {
     lock.releaseLock();

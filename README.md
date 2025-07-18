@@ -11,11 +11,14 @@ A Google Apps Script solution to:
 
 ## Features
 
-- **Single-Click Report**: Custom 📄 menu in Google Sheets with `Send Report` and `Test Send Report` options.
-- **Dynamic Range Detection**: Automatically finds the last row of data and captures only columns A–F.
-- **Image Consistency**: Ensures the image sent to WhatsApp is identical to the one uploaded to Drive.
-- **Configurable & Testable**: Built-in `testSendReport` function sends a test message to a debug number.
-- **Full Logging**: Appends a row per message in the `LOG` sheet with status and timestamp.
+- **Flexible Reporting**: Custom 📄 menu in Google Sheets with multiple sending options
+  - **Send only TO**: Send to group recipients only
+  - **Send TO & CC**: Send to both group and individual recipients
+  - **Test Send Report**: Verify setup with a test message
+- **Dynamic Range Detection**: Automatically finds the last row of data and captures only columns A–F
+- **Image Consistency**: Ensures the image sent to WhatsApp is identical to the one uploaded to Drive
+- **Configurable & Testable**: Built-in test function to validate message sending
+- **Full Logging**: Appends a row per message in the `LOG` sheet with detailed status and timestamp
 
 ---
 
@@ -40,7 +43,11 @@ A Google Apps Script solution to:
    var folder = DriveApp.getFolderById("YOUR_DRIVE_FOLDER_ID");
    ```
 4. Set your Fonnte API token in `MSGSENDER!B5`.
-5. Populate `MSGSENDER` rows C7:E with recipient phone, name (optional), and message text.
+5. Populate `MSGSENDER` rows B7:E with:
+   - Column B: Recipient type (TO/CC)
+   - Column C: Phone number
+   - Column D: Recipient name (optional)
+   - Column E: Message text
 6. Ensure `REPORT02` has:
    - Cell B2: logColumnA label (e.g. report name)
    - Cells B3/B4: start and end dates
@@ -51,41 +58,47 @@ A Google Apps Script solution to:
 
 ## Usage
 
-### Send Report (Production)
-1. In the spreadsheet UI, click **Send Report 📄 → Send Report 📩**.
-2. The script will:
-   - Update the timestamp in `REPORT02!B5`
-   - Capture a fresh screenshot of your report table
-   - Upload it to Drive and retrieve its file blob
-   - Send the image via WhatsApp to each recipient in `MSGSENDER`
-   - Log each send attempt in `LOG`
+### Sending Options
+1. **Send only TO 📩**
+   - Sends messages ONLY to recipients marked as "TO" in column B
+   - Typically used for sending to group recipients
 
-### Test Send Report (Debug)
-1. Click **Send Report 📄 → Test Send Report 🧪**.
-2. Sends a test message (and image) to `DEBUG_PHONE_RAW` or a hard-coded test number.
-3. Ideal for verifying your setup without hitting live recipients.
+2. **Send TO & CC 📩📋**
+   - Sends messages to ALL recipients (both "TO" and "CC")
+   - Used for comprehensive communication including groups and individuals
+
+3. **Test Send Report 🧪**
+   - Sends a test message to a predefined number
+   - Helps verify setup and API connectivity
+
+### Logging
+- Each message send attempt is logged in the `LOG` sheet
+- Logs include:
+  - Report name
+  - Date range
+  - Recipient details
+  - Send status (SENT_TO, SENT_CC, FAILED_TO, FAILED_CC)
+  - Timestamp
 
 ---
 
 ## How It Works
 
-- `onOpen()` – adds a custom menu with two items
-- `sendReport()` – main function for production sends
-- `testSendReport()` – similar flow, targets a single debug number
-- `createReportScreenshot()` – flushes changes, auto-detects data range in columns A-F, builds a table chart and returns a PNG blob
-- `uploadImageToDrive()` – uploads the blob to Drive, sets sharing to anyone-with-link, returns a direct download URL
-- Helpers:
-  - `findLastDataRow()` – finds the last non-empty row in column F
-  - `formatphone()`, `formatDate()`, `formatDateRange()` for formatting
+- `onOpen()` – adds a custom menu with three items
+- `sendReportTOOnly()` – sends to TO recipients
+- `sendReportTOAndCC()` – sends to all recipients
+- `testSendReport()` – sends a test message
+- `createReportScreenshot()` – generates a table chart image
+- `uploadImageToDrive()` – uploads image and returns a shareable link
 
 ---
 
 ## Troubleshooting
 
-- **Image Mismatch**: Ensure `flush()` and short `sleep()` are in place before screenshot.
-- **Stale Data**: Timestamp in `REPORT02!B5` is updated right before snapshot.
-- **Fonnte URL Issues**: If direct URL fails, send the blob (`file` payload) instead of `url`.
-- **Lock Errors**: If a process is still running, the script logs and exits.
+- **Image Mismatch**: Ensure `flush()` and short `sleep()` are in place before screenshot
+- **Stale Data**: Timestamp in `REPORT02!B5` is updated right before snapshot
+- **Fonnte URL Issues**: If direct URL fails, send the blob (`file` payload) instead
+- **Lock Errors**: If a process is still running, the script logs and exits
 
 ---
 
