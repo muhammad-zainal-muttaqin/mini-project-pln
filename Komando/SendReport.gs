@@ -1,6 +1,6 @@
 // Debug override: send all messages to this number for testing
 var DEBUG_OVERRIDE = false;
-var DEBUG_PHONE_RAW = '087778651293';
+var DEBUG_PHONE_RAW = '';
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Send Report 📄')
@@ -37,12 +37,12 @@ function sendReport() {
     }
 
     // Update timestamp in sheet before taking screenshot
-    reportSheet.getRange('C5').setValue(new Date());
+    reportSheet.getRange('B5').setValue(new Date());
     SpreadsheetApp.flush();
     Utilities.sleep(500);
 
     // Create file name based on date
-    var reportDateObj = reportSheet.getRange('C3').getValue();
+    var reportDateObj = reportSheet.getRange('B3').getValue();
     var reportDateStr = Utilities.formatDate(reportDateObj, Session.getScriptTimeZone(), 'yyyyMMdd');
     var now = new Date();
     var genDateTimeStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
@@ -70,9 +70,9 @@ function sendReport() {
     Logger.log("Image successfully uploaded to Drive: " + publicUrl);
 
     // Get data for logging
-    var logColumnA = reportSheet.getRange('C2').getValue();
-    var startDate = reportSheet.getRange('C3').getValue();
-    var endDate = reportSheet.getRange('C4').getValue();
+    var logColumnA = reportSheet.getRange('B2').getValue();
+    var startDate = reportSheet.getRange('B3').getValue();
+    var endDate = reportSheet.getRange('B4').getValue();
     var logColumnB = formatDateRange(startDate, endDate);
 
     // Retrieve token and recipient data
@@ -184,9 +184,9 @@ function createReportScreenshot(reportSheet) {
 
     // Determine last data row and fixed columns
     var lastRow = findLastDataRow(reportSheet);
-    var lastCol = 7; // up to column G
+    var lastCol = 6; // up to column F
 
-    // Read data range A1:G(lastRow)
+    // Read data range A1:F(lastRow)
     var dataVals = reportSheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
     
     // Build rows array with blank rows after row 5 and 8 (0-based index 4 and 7)
@@ -242,20 +242,20 @@ function getColumnLetter(columnNumber) {
 
 // Helper function to find the last row with data
 function findLastDataRow(reportSheet) {
-  // Retrieve all data in column G (G1:G100)
-  var columnGData = reportSheet.getRange('G1:G100').getValues();
+  // Retrieve all data in column F (F1:F100)
+  var columnFData = reportSheet.getRange('F1:F100').getValues();
   
   // Search from bottom up to find the last non-empty row
-  for (var i = columnGData.length - 1; i >= 0; i--) {
-    if (columnGData[i][0] !== '' && columnGData[i][0] !== null && columnGData[i][0] !== undefined) {
+  for (var i = columnFData.length - 1; i >= 0; i--) {
+    if (columnFData[i][0] !== '' && columnFData[i][0] !== null && columnFData[i][0] !== undefined) {
       var lastDataRow = i + 1; // +1 because array is 0-based but rows start at 1
-      Logger.log("Last row with data based on Column G: " + lastDataRow);
+      Logger.log("Last row with data based on Column F: " + lastDataRow);
       return lastDataRow;
     }
   }
   
   // If no data found, return a default of 30 rows for safety
-  Logger.log("No data found in Column G, using default 30 rows");
+  Logger.log("No data found in Column F, using default 30 rows");
   return 30;
 }
 
@@ -299,12 +299,12 @@ function testSendReport() {
     Logger.log("✅ All sheets found");
 
     // Update timestamp in sheet before taking screenshot
-    reportSheet.getRange('C5').setValue(new Date());
+    reportSheet.getRange('B5').setValue(new Date());
     SpreadsheetApp.flush();
     Utilities.sleep(500);
 
     // Create file name based on date
-    var reportDateObj = reportSheet.getRange('C3').getValue();
+    var reportDateObj = reportSheet.getRange('B3').getValue();
     var reportDateStr = Utilities.formatDate(reportDateObj, Session.getScriptTimeZone(), 'yyyyMMdd');
     var now = new Date();
     var genDateTimeStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
@@ -326,9 +326,9 @@ function testSendReport() {
     Logger.log("✅ Screenshot uploaded to Drive: " + publicUrl);
 
     // Get data for logging
-    var logColumnA = reportSheet.getRange('C2').getValue();
-    var startDate = reportSheet.getRange('C3').getValue();
-    var endDate = reportSheet.getRange('C4').getValue();
+    var logColumnA = reportSheet.getRange('B2').getValue();
+    var startDate = reportSheet.getRange('B3').getValue();
+    var endDate = reportSheet.getRange('B4').getValue();
     var logColumnB = formatDateRange(startDate, endDate);
     Logger.log("✅ Logging data: " + logColumnA + " | " + logColumnB);
 
