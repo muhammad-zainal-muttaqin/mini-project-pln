@@ -158,26 +158,34 @@ function formatDateRange(startDate, endDate) {
 
 function createReportScreenshot(reportSheet) {
   try {
-    // Cek data terlebih dahulu
-    var range = reportSheet.getRange("A1:H30");
-    var data = range.getValues();
-    Logger.log("Data rows: " + data.length + ", Data columns: " + data[0].length);
+    // Deteksi range dinamis - ambil dari A1 sampai data terakhir
+    var lastRow = reportSheet.getLastRow();
+    var lastCol = Math.max(reportSheet.getLastColumn(), 7); // Minimal sampai kolom G
     
-    // Buat chart sebagai tabel
+    // Pastikan range mencakup semua elemen penting:
+    // - Header info (B1:C5)
+    // - Logo & header summary (B8:G10) 
+    // - Header tabel (B12:G12)
+    // - Data sampai baris terakhir
+    var range = reportSheet.getRange(1, 1, lastRow, lastCol);
+    
+    Logger.log("Range dinamis: A1:" + getColumnLetter(lastCol) + lastRow);
+    Logger.log("Total rows: " + lastRow + ", Total columns: " + lastCol);
+    
+    // Buat chart sebagai tabel dengan range yang lebih besar
     var chart = reportSheet.newChart()
       .setChartType(Charts.ChartType.TABLE)
       .addRange(range)
       .setPosition(1, 1, 0, 0)
-      .setOption('width', 1200)
-      .setOption('height', 800)
+      .setOption('width', 1400)  // Lebih lebar untuk menampung semua kolom
+      .setOption('height', Math.max(800, lastRow * 25)) // Tinggi dinamis berdasarkan jumlah baris
       .setOption('backgroundColor', 'white')
       .setOption('legend', {position: 'none'})
       .setOption('enableInteractivity', false)
-      .setOption('alternatingRowStyle', true)
+      .setOption('alternatingRowStyle', false) // Nonaktifkan alternating untuk menjaga format asli
       .setOption('allowHtml', true)
       .setOption('showRowNumber', false)
-      .setOption('page', 'enable')
-      .setOption('pageSize', 30)
+      .setOption('page', 'disable') // Nonaktifkan pagination agar semua data tampil
       .build();
     
     // Ambil chart sebagai gambar
@@ -190,6 +198,17 @@ function createReportScreenshot(reportSheet) {
     Logger.log("Error saat membuat screenshot: " + error);
     return null;
   }
+}
+
+// Helper function untuk convert nomor kolom ke huruf
+function getColumnLetter(columnNumber) {
+  var columnLetter = '';
+  while (columnNumber > 0) {
+    var remainder = (columnNumber - 1) % 26;
+    columnLetter = String.fromCharCode(65 + remainder) + columnLetter;
+    columnNumber = Math.floor((columnNumber - 1) / 26);
+  }
+  return columnLetter;
 }
 
 function uploadImageToDrive(imageBlob) {
