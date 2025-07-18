@@ -178,49 +178,53 @@ function formatDateRange(startDate, endDate) {
 
 function createReportScreenshot(reportSheet) {
   try {
-    // Ensure all sheet changes are applied before screenshot
+    // Ensure sheet changes are applied
     SpreadsheetApp.flush();
     Utilities.sleep(500);
-    // Find last row containing data in column B (ORG_1)
+
+    // Determine last data row and fixed columns
     var lastRow = findLastDataRow(reportSheet);
+    var lastCol = 7; // up to column G
+
+    // Read data range A1:G(lastRow)
+    var dataVals = reportSheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
     
-    // IMPORTANT: Only capture up to column G (7th column) for the report
-    var lastCol = 7; // Column G = 7th column
-    
-    // Ensure range includes all essential elements:
-    // - Header info (B1:C5)
-    // - Logo & header summary (B8:G10) 
-    // - Table header (B12:G12)
-    // - Data up to the last row with data, only up to column G
-    var range = reportSheet.getRange(1, 1, lastRow, lastCol);
-    
-    Logger.log("Report range: A1:" + getColumnLetter(lastCol) + lastRow);
-    Logger.log("Total rows: " + lastRow + ", Total columns: " + lastCol + " (up to column G only)");
-    
-    // Build chart as a table with the correct range
-    var chart = reportSheet.newChart()
-      .setChartType(Charts.ChartType.TABLE)
-      .addRange(range)
-      .setPosition(1, 1, 0, 0)
-      .setOption('width', 1200)  // Suitable size for columns A-G
-      .setOption('height', Math.max(800, lastRow * 25)) // Dynamic height based on row count
+    // Build rows array with blank rows after row 5 and 8 (0-based index 4 and 7)
+    var combined = [];
+    dataVals.forEach(function(row, i) {
+      combined.push(row);
+      if (i === 4 || i === 7) {
+        combined.push(Array(lastCol).fill(''));
+      }
+    });
+
+    // Build DataTable for chart
+    var dtBuilder = Charts.newDataTable();
+    for (var c = 0; c < lastCol; c++) {
+      dtBuilder.addColumn(Charts.ColumnType.STRING, '');
+    }
+    // Add each row individually to DataTableBuilder
+    combined.forEach(function(row) {
+      dtBuilder.addRow(row);
+    });
+    var dataTable = dtBuilder.build();
+
+    // Create table chart using Charts service
+    var chart = Charts.newTableChart()
+      .setDataTable(dataTable)
+      .setOption('width', 1200)
+      .setOption('height', Math.max(800, combined.length * 25))
       .setOption('backgroundColor', 'white')
-      .setOption('legend', {position: 'none'})
       .setOption('enableInteractivity', false)
-      .setOption('alternatingRowStyle', false) // Disable alternating to keep original format
       .setOption('allowHtml', true)
       .setOption('showRowNumber', false)
-      .setOption('page', 'disable') // Disable pagination so all data is shown
+      .setOption('page', 'disable')
       .build();
-    
-    // Retrieve the chart as an image
-    var chartImage = chart.getBlob();
-    
-    Logger.log("Screenshot created, size: " + chartImage.getBytes().length + " bytes");
-    return chartImage;
-    
+
+    // Return chart image blob
+    return chart.getBlob();
   } catch (error) {
-    Logger.log("Error creating screenshot: " + error);
+    Logger.log('Error creating screenshot: ' + error);
     return null;
   }
 }
@@ -238,20 +242,20 @@ function getColumnLetter(columnNumber) {
 
 // Helper function to find the last row with data
 function findLastDataRow(reportSheet) {
-  // Retrieve all data in column B (B1:B100)
-  var columnBData = reportSheet.getRange('B1:B100').getValues();
+  // Retrieve all data in column G (G1:G100)
+  var columnGData = reportSheet.getRange('G1:G100').getValues();
   
   // Search from bottom up to find the last non-empty row
-  for (var i = columnBData.length - 1; i >= 0; i--) {
-    if (columnBData[i][0] !== '' && columnBData[i][0] !== null && columnBData[i][0] !== undefined) {
+  for (var i = columnGData.length - 1; i >= 0; i--) {
+    if (columnGData[i][0] !== '' && columnGData[i][0] !== null && columnGData[i][0] !== undefined) {
       var lastDataRow = i + 1; // +1 because array is 0-based but rows start at 1
-      Logger.log("Last row with data: " + lastDataRow);
+      Logger.log("Last row with data based on Column G: " + lastDataRow);
       return lastDataRow;
     }
   }
   
   // If no data found, return a default of 30 rows for safety
-  Logger.log("No data found, using default 30 rows");
+  Logger.log("No data found in Column G, using default 30 rows");
   return 30;
 }
 
