@@ -160,24 +160,27 @@ function createReportScreenshot(reportSheet) {
   try {
     // Deteksi range dinamis - ambil dari A1 sampai data terakhir
     var lastRow = reportSheet.getLastRow();
-    var lastCol = Math.max(reportSheet.getLastColumn(), 7); // Minimal sampai kolom G
+    
+    // PENTING: Hanya ambil sampai kolom G (kolom ke-7) untuk laporan
+    // Jangan ambil kolom H dan seterusnya yang berisi daftar pegawai
+    var lastCol = 7; // Kolom G = kolom ke-7
     
     // Pastikan range mencakup semua elemen penting:
     // - Header info (B1:C5)
     // - Logo & header summary (B8:G10) 
     // - Header tabel (B12:G12)
-    // - Data sampai baris terakhir
+    // - Data sampai baris terakhir, tapi hanya sampai kolom G
     var range = reportSheet.getRange(1, 1, lastRow, lastCol);
     
-    Logger.log("Range dinamis: A1:" + getColumnLetter(lastCol) + lastRow);
-    Logger.log("Total rows: " + lastRow + ", Total columns: " + lastCol);
+    Logger.log("Range laporan: A1:" + getColumnLetter(lastCol) + lastRow);
+    Logger.log("Total rows: " + lastRow + ", Total columns: " + lastCol + " (sampai kolom G saja)");
     
-    // Buat chart sebagai tabel dengan range yang lebih besar
+    // Buat chart sebagai tabel dengan range yang tepat
     var chart = reportSheet.newChart()
       .setChartType(Charts.ChartType.TABLE)
       .addRange(range)
       .setPosition(1, 1, 0, 0)
-      .setOption('width', 1400)  // Lebih lebar untuk menampung semua kolom
+      .setOption('width', 1200)  // Ukuran yang sesuai untuk kolom A-G
       .setOption('height', Math.max(800, lastRow * 25)) // Tinggi dinamis berdasarkan jumlah baris
       .setOption('backgroundColor', 'white')
       .setOption('legend', {position: 'none'})
