@@ -18,7 +18,7 @@ const CONFIG = {
     MESSAGES: 'MSGSENDER',
     LOG: 'LOG',
   },
-  DRIVE_FOLDER_ID: '1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT',
+  DRIVE_FOLDER_ID: '1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT', // Consider making this configurable outside the script for multi-environment deployments.
   API: {
     URL: 'https://api.fonnte.com/send',
     TOKEN_CELL: 'C5',
@@ -32,6 +32,19 @@ const CONFIG = {
     FLUSH: 500, // ms to wait after flushing spreadsheet changes
     API_RATE_LIMIT: 3000, // ms to wait between API calls
   },
+  // New constants for cell references and ranges
+  CELL_REFERENCES: {
+    REPORT_TIMESTAMP: 'B5',
+    REPORT_LOG_A: 'B2',
+    REPORT_START_DATE: 'B3',
+    REPORT_END_DATE: 'B4',
+  },
+  RECIPIENT_RANGE: {
+    START_ROW: 7,
+    START_COL: 2,
+    NUM_COLS: 4, // recipientType, rawPhone, name, message
+  },
+  REPORT_LAST_COLUMN_INDEX: 6, // Column F
 };
 
 // =================================================================
@@ -159,9 +172,9 @@ function updateTimestamp(reportSheet) {
  * @returns {{logA: string, logB: string, date: Date}}
  */
 function getReportDetails(reportSheet) {
-  const logA = reportSheet.getRange('B2').getValue();
-  const startDate = reportSheet.getRange('B3').getValue();
-  const endDate = reportSheet.getRange('B4').getValue();
+  const logA = reportSheet.getRange(CONFIG.CELL_REFERENCES.REPORT_LOG_A).getValue();
+  const startDate = reportSheet.getRange(CONFIG.CELL_REFERENCES.REPORT_START_DATE).getValue();
+  const endDate = reportSheet.getRange(CONFIG.CELL_REFERENCES.REPORT_END_DATE).getValue();
   return {
     logA: logA,
     logB: formatDateRange(startDate, endDate),
@@ -197,7 +210,12 @@ function sendMessagesToRecipients(sheets, reportDetails, blob, fileName, publicU
     throw new Error(`API Token not found in cell ${CONFIG.API.TOKEN_CELL}`);
   }
 
-  const recipientData = sheets.messages.getRange(7, 2, sheets.messages.getLastRow() - 6, 4).getValues();
+  const recipientData = sheets.messages.getRange(
+    CONFIG.RECIPIENT_RANGE.START_ROW,
+    CONFIG.RECIPIENT_RANGE.START_COL,
+    sheets.messages.getLastRow() - (CONFIG.RECIPIENT_RANGE.START_ROW - 1),
+    CONFIG.RECIPIENT_RANGE.NUM_COLS
+  ).getValues();
   let sentCount = 0;
   let skippedCount = 0;
 
@@ -347,7 +365,7 @@ function formatDate(date) {
 function createReportScreenshot(reportSheet) {
   try {
     const lastRow = findLastDataRow(reportSheet, 'F', 100);
-    const lastCol = 6; // Column F
+    const lastCol = CONFIG.REPORT_LAST_COLUMN_INDEX; 
     const data = reportSheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
 
     const dataTable = Charts.newDataTable();
