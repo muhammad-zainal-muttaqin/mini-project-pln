@@ -1,324 +1,401 @@
-// Debug override: send all messages to this number for testing
-var DEBUG_OVERRIDE = false;
-var DEBUG_PHONE_RAW = '087778651293';
+/**
+ * @fileoverview Google Apps Script for sending reports from a Google Sheet via WhatsApp.
+ * This script creates a report from a sheet, saves it as an image to Google Drive,
+ * and sends it to a list of recipients using the Fonnte API.
+ */
 
-function getTargetPhone(rawPhone) {
-  return formatPhone(DEBUG_OVERRIDE ? DEBUG_PHONE_RAW : rawPhone);
-}
+// =================================================================
+// CONFIGURATION
+// =================================================================
 
-function generateReport02() {
-  // Ambil screenshot tabel REPORT02 sebagai blob
-  var blob = getReportScreenshot();
-  if (!blob) {
-    Logger.log("Gagal ambil screenshot");
-    return;
-  }
-  // Ambil spreadsheet dan tanggal report
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var reportSheet = ss.getSheetByName('REPORT02');
-  if (!reportSheet) {
-    Logger.log("Sheet 'REPORT02' tidak ditemukan!");
-    return;
-  }
-  var reportDateObj = reportSheet.getRange('C3').getValue();
-  var reportDateStr = Utilities.formatDate(reportDateObj, Session.getScriptTimeZone(), 'yyyyMMdd');
-  var genDateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd');
-  var fileName = 'KOMANDO_' + reportDateStr + '_' + genDateStr + '.png';
-  blob.setName(fileName);
-  // Ambil data untuk mengirim pesan
-  var sheet = ss.getSheetByName('MSGSENDER');
-  if (!sheet) {
-    Logger.log("Sheet 'MSGSENDER' tidak ditemukan!");
-    return;
-  }
-  var token = sheet.getRange('C5').getValue();
-  var data = sheet.getRange(7, 3, sheet.getLastRow() - 6, 3).getValues(); // C7:E
+/**
+ * Script configuration settings.
+ * @const
+ */
+const CONFIG = {
+  SHEET_NAMES: {
+    REPORT: 'REPORT02',
+    MESSAGES: 'MSGSENDER',
+    LOG: 'LOG',
+  },
+  DRIVE_FOLDER_ID: '1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT',
+  API: {
+    URL: 'https://api.fonnte.com/send',
+    TOKEN_CELL: 'C5',
+  },
+  DEBUG: {
+    ENABLED: false,
+    PHONE_NUMBER: '', // E.g., '6281234567890'
+  },
+  LOCK_TIMEOUT: 5000, // 5 seconds
+  SLEEP_TIME: {
+    FLUSH: 500, // ms to wait after flushing spreadsheet changes
+    API_RATE_LIMIT: 3000, // ms to wait between API calls
+  },
+};
 
-  // Setup logging for generateReport02
-  var logSheet = ss.getSheetByName('LOG');
-  if (!logSheet) {
-    Logger.log("Sheet 'LOG' tidak ditemukan!");
-  }
-  var logColumnA = reportSheet.getRange('C2').getValue();
-  var startDate = reportSheet.getRange('C3').getValue();
-  var endDate = reportSheet.getRange('C4').getValue();
-  var logColumnB = formatDateRange(startDate, endDate);
+// =================================================================
+// UI & MENU
+// =================================================================
 
-  // Kirim screenshot sebagai lampiran ke setiap nomor
-  data.forEach(function(row) {
-    var phone = getTargetPhone(row[0]);
-    var messageText = row[2];
-    if (!phone || !messageText) return;
-    try {
-      var payload = {
-        target:   phone,
-        message:  messageText,
-        file:     blob,
-        filename: fileName
-      };
-      var options = {
-        method: 'post',
-        headers: { 'Authorization': token },
-        payload: payload,
-        muteHttpExceptions: true
-      };
-      var response = UrlFetchApp.fetch('https://api.fonnte.com/send', options);
-      Logger.log('Pesan ke ' + phone + ': ' + response.getContentText());
-      if (logSheet) logSheet.appendRow([logColumnA, logColumnB, phone, row[1], messageText, 'SENT', new Date()]);
-    } catch (e) {
-      Logger.log('Error kirim ke ' + phone + ': ' + e);
-      if (logSheet) logSheet.appendRow([logColumnA, logColumnB, phone, row[1], messageText, 'FAILED', new Date()]);
-    }
-    // Jeda untuk menghindari rate limit
-    Utilities.sleep(3000);
-  });
-}
-
+/**
+ * Adds a custom menu to the Google Sheets UI when the spreadsheet is opened.
+ */
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('Generate 📄')
-    .addItem('Generate Report 📄🔍', 'generateReport02AndUpload')
-    .addItem('Send Message 📩', 'sendWhatsAppMessages')
+  SpreadsheetApp.getUi()
+    .createMenu('Send Report 📄')
+    .addItem('Send only TO 📩', 'sendReportTOOnly')
+    .addItem('Send TO & CC 📩📋', 'sendReportTOAndCC')
+    .addSeparator()
+    .addItem('Test Send Report 🧪', 'testSendReport')
     .addToUi();
 }
 
-function sendWhatsAppMessages() {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    Logger.log("Tidak dapat memperoleh lock. Proses sudah berjalan.");
+/**
+ * Entry point for sending the report to 'TO' recipients only.
+ */
+function sendReportTOOnly() {
+  sendReport('TO');
+}
+
+/**
+ * Entry point for sending the report to 'TO' and 'CC' recipients.
+ */
+function sendReportTOAndCC() {
+  sendReport('ALL');
+}
+
+/**
+ * Entry point for sending a test report.
+ */
+function testSendReport() {
+  sendReport('TEST');
+}
+
+// =================================================================
+// MAIN REPORTING LOGIC
+// =================================================================
+
+/**
+ * Main function to generate and send the report.
+ * @param {string} filterType - The recipient filter type ('TO', 'ALL', or 'TEST').
+ */
+function sendReport(filterType) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(CONFIG.LOCK_TIMEOUT)) {
+    Logger.log('Could not acquire lock. Process is already running.');
     return;
   }
 
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName("MSGSENDER");
-    var logSheet = ss.getSheetByName("LOG");
-    var reportSheet = ss.getSheetByName("REPORT02");
-    if (!sheet) {
-      Logger.log("Sheet 'MSGSENDER' tidak ditemukan!");
-      return;
-    }
-    if (!logSheet) {
-      Logger.log("Sheet 'LOG' tidak ditemukan!");
-      return;
-    }
-    if (!reportSheet) {
-      Logger.log("Sheet 'REPORT02' tidak ditemukan!");
-      return;
-    }
+    Logger.log(`=== STARTING REPORT PROCESS (Filter: ${filterType}) ===`);
 
-    // Ambil data dari sheet REPORT02 untuk kolom A dan B di LOG
-    var logColumnA = reportSheet.getRange("C2").getValue();
-    var startDate = reportSheet.getRange("C3").getValue();
-    var endDate = reportSheet.getRange("C4").getValue();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheets = getRequiredSheets(ss);
     
-    // Debug: log tipe data yang diambil
-    Logger.log("Start Date Type: " + typeof startDate + ", Value: " + startDate);
-    Logger.log("End Date Type: " + typeof endDate + ", Value: " + endDate);
+    updateTimestamp(sheets.report);
+
+    const reportDetails = getReportDetails(sheets.report);
+    const fileName = createFileName(reportDetails.date, filterType === 'TEST');
     
-    var logColumnB = formatDateRange(startDate, endDate);
+    const screenshotBlob = createReportScreenshot(sheets.report);
+    screenshotBlob.setName(fileName);
 
-    var urlFonnte = "https://api.fonnte.com/send";
-    var tokenFonnte = sheet.getRange("C5").getValue();
+    const publicUrl = uploadImageToDrive(screenshotBlob, fileName);
+    Logger.log('Image successfully uploaded to Drive: ' + publicUrl);
 
-    var dataRange = sheet.getRange(7, 3, sheet.getLastRow() - 6, 3).getValues(); // C7:E
-    for (var i = 0; i < dataRange.length; i++) {
-      var phoneNumber = getTargetPhone(dataRange[i][0]); // C
-      var recipientName = dataRange[i][1]; // D
-      var message = dataRange[i][2]; // E
-
-      // Skip rows that don't have phone number or message
-      if (!phoneNumber || !message || phoneNumber === '' || message === '') {
-        continue;
-      }
-
-      if (phoneNumber && message) {
-        var payload = {
-          "target": phoneNumber,
-          "message": message
-        };
-        var options = {
-          "method": "post",
-          "headers": { "Authorization": tokenFonnte },
-          "payload": payload,
-          "muteHttpExceptions": true
-        };
-
-        try {
-          var response = UrlFetchApp.fetch(urlFonnte, options);
-          Logger.log("Pesan terkirim ke " + phoneNumber + ": " + response.getContentText());
-          // Log ke LOG sheet
-          logSheet.appendRow([logColumnA, logColumnB, phoneNumber, recipientName, message, "SENT", new Date()]);
-          
-          // Delay 3 detik antara setiap pengiriman untuk menghindari rate limiting
-          Utilities.sleep(3000);
-        } catch (error) {
-          Logger.log("Error saat mengirim pesan: " + error);
-          logSheet.appendRow([logColumnA, logColumnB, phoneNumber, recipientName, message, "FAILED", new Date()]);
-          
-          // Delay juga jika error untuk konsistensi
-          Utilities.sleep(3000);
-        }
-      }
+    if (filterType === 'TEST') {
+      sendTestMessage(sheets, reportDetails, screenshotBlob, fileName);
+    } else {
+      sendMessagesToRecipients(sheets, reportDetails, screenshotBlob, fileName, publicUrl, filterType);
     }
+
+    Logger.log('=== REPORT PROCESS COMPLETED ===');
+  } catch (error) {
+    Logger.log(`ERROR in sendReport: ${error.message}\n${error.stack}`);
   } finally {
     lock.releaseLock();
   }
 }
 
-function formatPhone(num) {
-  if (!num) return '';
-  num = num.toString().trim();
-  if (num.startsWith('+628')) {
-    return '628' + num.substring(4);
-  } else if (num.startsWith('08')) {
-    return '628' + num.substring(2);
-  } else if (num.startsWith('628')) {
-    return num;
+// =================================================================
+// HELPER FUNCTIONS
+// =================================================================
+
+/**
+ * Retrieves all required sheets from the spreadsheet.
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss - The active spreadsheet.
+ * @returns {{report: GoogleAppsScript.Spreadsheet.Sheet, messages: GoogleAppsScript.Spreadsheet.Sheet, log: GoogleAppsScript.Spreadsheet.Sheet}}
+ * @throws {Error} If a required sheet is not found.
+ */
+function getRequiredSheets(ss) {
+  const sheets = {
+    report: ss.getSheetByName(CONFIG.SHEET_NAMES.REPORT),
+    messages: ss.getSheetByName(CONFIG.SHEET_NAMES.MESSAGES),
+    log: ss.getSheetByName(CONFIG.SHEET_NAMES.LOG),
+  };
+
+  for (const [name, sheet] of Object.entries(sheets)) {
+    if (!sheet) {
+      throw new Error(`Sheet '${CONFIG.SHEET_NAMES[name.toUpperCase()]}' not found!`);
+    }
   }
-  return num;
+  return sheets;
 }
 
+/**
+ * Updates the timestamp on the report sheet.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} reportSheet
+ */
+function updateTimestamp(reportSheet) {
+  reportSheet.getRange('B5').setValue(new Date());
+  SpreadsheetApp.flush();
+  Utilities.sleep(CONFIG.SLEEP_TIME.FLUSH);
+}
+
+/**
+ * Gets report metadata from the report sheet.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} reportSheet
+ * @returns {{logA: string, logB: string, date: Date}}
+ */
+function getReportDetails(reportSheet) {
+  const logA = reportSheet.getRange('B2').getValue();
+  const startDate = reportSheet.getRange('B3').getValue();
+  const endDate = reportSheet.getRange('B4').getValue();
+  return {
+    logA: logA,
+    logB: formatDateRange(startDate, endDate),
+    date: startDate,
+  };
+}
+
+/**
+ * Creates a unique file name for the report image.
+ * @param {Date} reportDate - The date of the report.
+ * @param {boolean} isTest - Whether this is a test report.
+ * @returns {string} The generated file name.
+ */
+function createFileName(reportDate, isTest = false) {
+  const reportDateStr = Utilities.formatDate(reportDate, Session.getScriptTimeZone(), 'yyyyMMdd');
+  const nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  const prefix = isTest ? 'TEST_KOMANDO_' : 'KOMANDO_';
+  return `${prefix}${reportDateStr}_${nowStr}.png`;
+}
+
+/**
+ * Sends messages to all relevant recipients.
+ * @param {object} sheets - The collection of required sheets.
+ * @param {object} reportDetails - The details for logging.
+ * @param {GoogleAppsScript.Base.Blob} blob - The report image blob.
+ * @param {string} fileName - The name of the image file.
+ * @param {string} publicUrl - The public URL of the image on Google Drive.
+ * @param {string} filterType - The recipient filter ('TO' or 'ALL').
+ */
+function sendMessagesToRecipients(sheets, reportDetails, blob, fileName, publicUrl, filterType) {
+  const token = sheets.messages.getRange(CONFIG.API.TOKEN_CELL).getValue();
+  if (!token) {
+    throw new Error(`API Token not found in cell ${CONFIG.API.TOKEN_CELL}`);
+  }
+
+  const recipientData = sheets.messages.getRange(7, 2, sheets.messages.getLastRow() - 6, 4).getValues();
+  let sentCount = 0;
+  let skippedCount = 0;
+
+  recipientData.forEach(row => {
+    const [recipientType, rawPhone, name, message] = row;
+
+    if (!rawPhone || !message) return;
+
+    if (filterType === 'TO' && recipientType !== 'TO') {
+      skippedCount++;
+      Logger.log(`Skipped ${recipientType} recipient: ${name}`);
+      return;
+    }
+
+    const phoneNumber = getTargetPhone(rawPhone);
+    try {
+      sendMessage(token, phoneNumber, message, blob, fileName);
+      logResult(sheets.log, reportDetails, phoneNumber, name, message, `SENT_${recipientType}`);
+      sentCount++;
+    } catch (error) {
+      Logger.log(`Error sending to ${phoneNumber} (${name}): ${error.message}`);
+      logResult(sheets.log, reportDetails, phoneNumber, name, message, `FAILED_${recipientType}`);
+    }
+    Utilities.sleep(CONFIG.SLEEP_TIME.API_RATE_LIMIT);
+  });
+
+  Logger.log(`Process completed. Sent: ${sentCount}, Skipped: ${skippedCount}`);
+}
+
+/**
+ * Sends a single test message.
+ * @param {object} sheets - The collection of required sheets.
+ * @param {object} reportDetails - The details for logging.
+ * @param {GoogleAppsScript.Base.Blob} blob - The report image blob.
+ * @param {string} fileName - The name of the image file.
+ */
+function sendTestMessage(sheets, reportDetails, blob, fileName) {
+  const token = sheets.messages.getRange(CONFIG.API.TOKEN_CELL).getValue();
+  const testPhone = '087778651293'; // Hardcoded for testing
+  const testName = 'Test User';
+  const testMessage = `🧪 KOMANDO REPORT TEST\n\nThis is an automated report sending test.\n\nDate: ${reportDetails.logB}`;
+  const phoneNumber = formatPhone(testPhone);
+
+  try {
+    Logger.log(`Sending test message to ${phoneNumber}`);
+    sendMessage(token, phoneNumber, testMessage, blob, fileName);
+    logResult(sheets.log, reportDetails, phoneNumber, testName, testMessage, 'TEST_SENT');
+    Logger.log('Test message sent successfully.');
+  } catch (error) {
+    Logger.log(`Error sending test message: ${error.message}`);
+    logResult(sheets.log, reportDetails, phoneNumber, testName, testMessage, 'TEST_FAILED');
+  }
+}
+
+/**
+ * Sends a message via the Fonnte API.
+ * @param {string} token - The API authorization token.
+ * @param {string} target - The recipient's phone number.
+ * @param {string} message - The text message.
+ * @param {GoogleAppsScript.Base.Blob} fileBlob - The file to attach.
+ * @param {string} filename - The name of the attached file.
+ */
+function sendMessage(token, target, message, fileBlob, filename) {
+  const payload = { target, message, file: fileBlob, filename };
+  const options = {
+    method: 'post',
+    headers: { 'Authorization': token },
+    payload: payload,
+    muteHttpExceptions: true,
+  };
+  const response = UrlFetchApp.fetch(CONFIG.API.URL, options);
+  Logger.log(`Message sent to ${target}. Response: ${response.getContentText()}`);
+}
+
+/**
+ * Logs the result of a send attempt to the LOG sheet.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} logSheet
+ * @param {object} reportDetails - Contains logA and logB.
+ * @param {string} phone - The recipient's phone number.
+ * @param {string} name - The recipient's name.
+ * @param {string} message - The message sent.
+ * @param {string} status - The result status (e.g., 'SENT_TO', 'FAILED_CC').
+ */
+function logResult(logSheet, reportDetails, phone, name, message, status) {
+  logSheet.appendRow([reportDetails.logA, reportDetails.logB, phone, name, message, status, new Date()]);
+}
+
+// =================================================================
+// UTILITY FUNCTIONS
+// =================================================================
+
+/**
+ * Returns the target phone number, using a debug override if enabled.
+ * @param {string} rawPhone - The raw phone number from the sheet.
+ * @returns {string} The formatted phone number.
+ */
+function getTargetPhone(rawPhone) {
+  const phone = CONFIG.DEBUG.ENABLED ? CONFIG.DEBUG.PHONE_NUMBER : rawPhone;
+  return formatPhone(phone);
+}
+
+/**
+ * Formats a phone number to the '62...' standard.
+ * @param {string|number} num - The phone number to format.
+ * @returns {string} The formatted phone number.
+ */
+function formatPhone(num) {
+  if (!num) return '';
+  const strNum = String(num).trim();
+  if (strNum.startsWith('+628')) return '628' + strNum.substring(4);
+  if (strNum.startsWith('08')) return '628' + strNum.substring(2);
+  return strNum;
+}
+
+/**
+ * Formats a date range string.
+ * @param {Date} startDate
+ * @param {Date} endDate
+ * @returns {string} Formatted date range (e.g., "1 Jan 2023 to 31 Jan 2023").
+ */
+function formatDateRange(startDate, endDate) {
+  return `${formatDate(startDate)} to ${formatDate(endDate)}`;
+}
+
+/**
+ * Formats a single date object into "D MMM YYYY" format.
+ * @param {Date|string} date - The date to format.
+ * @returns {string} The formatted date string.
+ */
 function formatDate(date) {
   if (!date) return '';
-  
-  // Jika date adalah string, coba konversi ke Date object
   if (typeof date === 'string') {
     date = new Date(date);
   }
-  
-  // Validasi apakah date adalah Date object yang valid
   if (!(date instanceof Date) || isNaN(date.getTime())) {
-    return date.toString(); // Return string asli jika tidak bisa dikonversi
+    return String(date);
   }
-  
-  var day = date.getDate();
-  var month = date.getMonth();
-  var year = date.getFullYear();
-  
-  var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  
-  return day + " " + monthNames[month] + " " + year;
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'd MMM yyyy');
 }
 
-function formatDateRange(startDate, endDate) {
-  return formatDate(startDate) + " s.d. " + formatDate(endDate);
-}
-
-function getReportScreenshot() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var reportSheet = ss.getSheetByName("REPORT02");
-  
-  if (!reportSheet) {
-    Logger.log("Sheet 'REPORT02' tidak ditemukan!");
-    return null;
-  }
-  
+/**
+ * Creates a screenshot of the report range as a blob.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} reportSheet
+ * @returns {GoogleAppsScript.Base.Blob} The image blob of the report chart.
+ * @throws {Error} If the screenshot creation fails.
+ */
+function createReportScreenshot(reportSheet) {
   try {
-    // Cek data terlebih dahulu
-    var range = reportSheet.getRange("A1:H30");
-    var data = range.getValues();
-    Logger.log("Data rows: " + data.length + ", Data columns: " + data[0].length);
-    Logger.log("Sample data: " + JSON.stringify(data[0]));
-    
-    // Gunakan range lengkap untuk menampilkan semua data
-    var chart = reportSheet.newChart()
-      .setChartType(Charts.ChartType.TABLE)
-      .addRange(range)
-      .setPosition(1, 1, 0, 0)
+    const lastRow = findLastDataRow(reportSheet, 'F', 100);
+    const lastCol = 6; // Column F
+    const data = reportSheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+
+    const dataTable = Charts.newDataTable();
+    for (let c = 0; c < lastCol; c++) {
+      dataTable.addColumn(Charts.ColumnType.STRING, '');
+    }
+    data.forEach(row => dataTable.addRow(row));
+
+    const chart = Charts.newTableChart()
+      .setDataTable(dataTable)
       .setOption('width', 1200)
-      .setOption('height', 800)
-      .setOption('backgroundColor', 'white')
-      .setOption('legend', {position: 'none'})
-      .setOption('enableInteractivity', false)
-      .setOption('alternatingRowStyle', true)
+      .setOption('height', Math.max(800, data.length * 25 + 100)) // Add padding
       .setOption('allowHtml', true)
       .setOption('showRowNumber', false)
-      .setOption('page', 'enable')
-      .setOption('pageSize', 30)
       .build();
-    
-    // Get the chart as image without inserting it
-    var chartImage = chart.getBlob();
-    
-    Logger.log("Chart image berhasil dibuat, ukuran: " + chartImage.getBytes().length + " bytes");
-    return chartImage;
-    
+
+    return chart.getBlob();
   } catch (error) {
-    Logger.log("Error saat membuat screenshot: " + error);
-    return null;
+    throw new Error(`Failed to create screenshot: ${error.message}`);
   }
 }
 
-function uploadImageAndGetDirectLink(imageBlob) {
-  var folder = DriveApp.getFolderById("1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT");
-  var file = folder.createFile(imageBlob);
+/**
+ * Finds the last row with data in a specific column.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - The sheet to search.
+ * @param {string} column - The column letter to check (e.g., 'F').
+ * @param {number} maxRows - The maximum number of rows to check.
+ * @returns {number} The last row number with data.
+ */
+function findLastDataRow(sheet, column, maxRows) {
+  const values = sheet.getRange(`${column}1:${column}${maxRows}`).getValues();
+  for (let i = values.length - 1; i >= 0; i--) {
+    if (values[i][0]) {
+      return i + 1;
+    }
+  }
+  return 30; // Default fallback
+}
+
+/**
+ * Uploads a blob to a specific Google Drive folder and returns its public URL.
+ * @param {GoogleAppsScript.Base.Blob} blob - The file blob to upload.
+ * @param {string} fileName - The desired file name.
+ * @returns {string} The public download URL of the file.
+ */
+function uploadImageToDrive(blob, fileName) {
+  const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  const file = folder.createFile(blob.setName(fileName));
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return "https://drive.google.com/uc?id=" + file.getId();
-}
-
-function sendWhatsAppWithPublicUrl(phoneNumber, message, publicUrl, tokenFonnte) {
-  var urlFonnte = "https://api.fonnte.com/send";
-  var payload = {
-    "target": phoneNumber,
-    "message": message,
-    "url": publicUrl,
-    "filename": "laporan.png" // beri tahu API tipe file, agar format PNG dikenali
-    // "countryCode": "62" // optional
-  };
-  var options = {
-    "method": "post",
-    "headers": { "Authorization": tokenFonnte },
-    "payload": payload,
-    "muteHttpExceptions": true
-  };
-  var response = UrlFetchApp.fetch(urlFonnte, options);
-  Logger.log(response.getContentText());
-}
-
-function sendReportWithScreenshot() {
-  var screenshot = getReportScreenshot();
-  if (screenshot) {
-    var imageUrl = uploadImageAndGetDirectLink(screenshot); // Sudah menghasilkan direct link Google Drive
-    Logger.log("Public URL (Drive Direct Download): " + imageUrl);
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName("MSGSENDER");
-    var tokenFonnte = sheet.getRange("C5").getValue();
-    var phoneNumber = "6287778651293";
-    var message = "Berikut laporan harian Anda, silakan cek gambar di bawah ini.";
-
-    sendWhatsAppWithPublicUrl(phoneNumber, message, imageUrl, tokenFonnte);
-    Logger.log("Pesan WhatsApp dengan gambar sudah dikirim!");
-  } else {
-    Logger.log("Gagal membuat screenshot!");
-  }
-}
-
-function generateReport02WithUploadAndLog() {
-  // Only upload the screenshot to Drive
-  var blob = getReportScreenshot();
-  if (!blob) {
-    Logger.log("Gagal ambil screenshot");
-    return;
-  }
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var reportSheet = ss.getSheetByName('REPORT02');
-  if (!reportSheet) {
-    Logger.log("Sheet 'REPORT02' tidak ditemukan!");
-    return;
-  }
-  // Build filename
-  var reportDateObj = reportSheet.getRange('C3').getValue();
-  var reportDateStr = Utilities.formatDate(reportDateObj, Session.getScriptTimeZone(), 'yyyyMMdd');
-  var genDateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd');
-  var fileName = 'KOMANDO_' + reportDateStr + '_' + genDateStr + '.png';
-  blob.setName(fileName);
-  // Upload to Drive
-  var publicUrl = uploadImageAndGetDirectLink(blob);
-  Logger.log("Uploaded to Drive: " + publicUrl);
-}
-
-// Wrapper: run original send + upload when Generate Report is pressed
-function generateReport02AndUpload() {
-  generateReport02();
-  generateReport02WithUploadAndLog();
+  return `https://drive.google.com/uc?export=download&id=${file.getId()}`;
 }
