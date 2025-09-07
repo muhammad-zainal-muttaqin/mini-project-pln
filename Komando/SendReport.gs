@@ -1,6 +1,8 @@
 // Debug override: send all messages to this number for testing
 var DEBUG_OVERRIDE = false;
 var DEBUG_PHONE_RAW = '';
+// Drive folder ID used for saving report images
+var DRIVE_FOLDER_ID = PropertiesService.getScriptProperties().getProperty('DRIVE_FOLDER_ID') || '1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT';
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Send Report 📄')
@@ -298,7 +300,7 @@ function findLastDataRow(reportSheet) {
 }
 
 function uploadImageToDrive(imageBlob) {
-  var folder = DriveApp.getFolderById("1WLXGZeinrbBPt6Si3Qhn7lME9UYinQiT");
+  var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
   var file = folder.createFile(imageBlob);
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   // Use export=download for direct download
