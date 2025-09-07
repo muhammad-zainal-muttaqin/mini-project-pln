@@ -178,12 +178,13 @@ function getTargetPhone(rawPhone) {
 function formatPhone(num) {
   if (!num) return '';
   num = num.toString().trim();
+  num = num.replace(/\D/g, '');
   if (num.startsWith('+628')) {
-    return '628' + num.substring(4);
+    num = '628' + num.substring(4);
   } else if (num.startsWith('08')) {
-    return '628' + num.substring(2);
+    num = '628' + num.substring(2);
   } else if (num.startsWith('628')) {
-    return num;
+    // already in correct format
   }
   return num;
 }
